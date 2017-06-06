@@ -130,7 +130,8 @@ def main(filename, proxy, speedup=1):
     print_thread = threading.Thread(target=printer)
     # print_thread.daemon = True
     print_thread.start()
-
+    # Create one thread to start with
+    _create_worker_thread()
     _replay(requests, speedup, proxy)
 
     # block until all tasks are done
@@ -142,12 +143,12 @@ def main(filename, proxy, speedup=1):
 
 def insert_into_queue(tuple):
     if q.qsize() > 0:
-        _create_another_thread()
+        _create_worker_thread()
 
     q.put(tuple, block=True)
 
 
-def _create_another_thread():
+def _create_worker_thread():
     # Clean up threads
     global threads
     threads = [t for t in threads if t.isAlive()]
