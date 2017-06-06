@@ -59,26 +59,33 @@ def stderr(string):
     print_queue.put((sys.stderr, colored(string, 'yellow')))
 
 def _attemptRequest(url):
-    global failed_count
     try:
         response = foo.get(url)
         req_result = response.elapsed.total_seconds()
+        req_code = response.status_code
     except Exception as e:
         req_result = "FAILED"
-        failed_count += 1
+        req_code = None
 
-    return req_result
+    return (req_result, req_code)
 
 total_target = timedelta(microseconds=1)
 total_actual = timedelta(microseconds=1)
-def handle_response(index, request_time, duration, response):
+def handle_response(index, request_time, duration, response, expected_code, response_code):
     global total_actual
-    try:
-
-        total_actual += timedelta(seconds=response)
-    except TypeError:
-        # When a failed request comes in, treat it as no change vs target duration
+    global failed_count
+    global total_target
+    total_target += duration
+    if (expected_code != response_code):
         total_actual += duration
+        failed_count += 1
+    else:
+        try:
+            total_actual += timedelta(seconds=response)
+        except TypeError:
+            # When a failed request comes in, treat it as no change vs target duration
+            total_actual += duration
+            failed_count += 1
 
     print_main_output(index, total_number)
 
@@ -88,16 +95,16 @@ def worker():
         #    stderr("<<< Caught up, clearing thread")
             #break
         #    pass
-        (index, url, request_time, duration) = q.get(block=True)
+        (index, url, request_time, duration, code) = q.get(block=True)
         q.task_done()
         #stderr(str.format("[%d] Time: %s, Duration: %s, URL: %s" % (index, url, request_time, duration)))
 
-        response = _attemptRequest(url)
+        (response, response_code) = _attemptRequest(url)
         #time.sleep(1 * random.randrange(0, 10))
 
         #response = random.randrange(1,100)
         
-        handle_response(index, request_time, duration, response)
+        handle_response(index, request_time, duration, response, code, response_code)
 
 
 
@@ -155,9 +162,9 @@ def rpad(number):
 def lpad(number):
     return "{:>10}".format(number)
 
-def print_debug_output(index, total, next_request_delta, duration):
-    print(colored("[%s/%s] Q: %d T: %d Next request in %s seconds, expected duration %s seconds" % (
-        lpad(index), rpad(total), q.qsize(), len(threads), next_request_delta, duration
+def print_debug_output(index, total, next_request_delta, duration, code):
+    print(colored("[%s/%s] Q: %d T: %d Next request in %s seconds, expected duration %s seconds, code %s" % (
+        lpad(index), rpad(total), q.qsize(), len(threads), next_request_delta, duration, code
     ), 'yellow'), file=sys.stderr)
 
 
@@ -186,28 +193,26 @@ def print_main_output(index, total):
     ), 'green'))
 
 def _replay(requests, speedup, host):
-    global total_target
     """Replay the requests passed as argument"""
     total_delta = requests[-1][0] - requests[0][0]
     print("%d requests to go (time: %s)" % (len(requests), total_delta), file=sys.stderr)
     last_time = requests[0][0]
     index = 0
-    for request_time, path, duration in requests:
+    for request_time, path, duration, code in requests:
         time_delta = (request_time - last_time) // speedup
-        total_target += timedelta(microseconds=duration)
-        print_debug_output(index, total_number, time_delta.total_seconds(), timedelta(microseconds=duration))
+        print_debug_output(index, total_number, time_delta.total_seconds(), timedelta(microseconds=duration), code)
         time.sleep(time_delta.total_seconds())
 
         last_time = request_time
         url = "http://" + host + path
 
-        insert_into_queue((index, url, request_time, timedelta(microseconds=duration)))
+        insert_into_queue((index, url, request_time, timedelta(microseconds=duration), code))
         index += 1
 
 
 def _parse_logfile(filename):
     """Parse the logfile and return a list with tuples of the form
-    (<request time>, <requested url>, <request duration>)
+    (<request time>, <requested url>, <request duration>, <http code>)
     """
     logfile = open(filename, "r")
     requests = []
@@ -222,7 +227,8 @@ def _parse_logfile(filename):
             sys.exit(1)
         path = parts[PATH_INDEX]
         duration = int(parts[-1][:-1])
-        requests.append((request_time, path, duration))
+        code = parts[7]
+        requests.append((request_time, path, duration, code))
         # print (request_time, path, duration)
         # print(parts, duration)
         # sys.exit(1)
