@@ -87,7 +87,7 @@ def handle_response(index, request_time, duration, response, expected_code, resp
             total_actual += duration
             failed_count += 1
 
-    print_main_output(index, total_number)
+    print_main_output(index, total_number, expected_code, response_code, response)
 
 def worker():
     while True:
@@ -177,7 +177,17 @@ def hms_string(sec_elapsed):
 # End hms_string
 
 
-def print_main_output(index, total):
+def print_main_output(index, total, expected_code, response_code, response):
+    fail_reason = None
+    if expected_code != response_code:
+        fail_reason = "Code %s != %s" % (response_code, expected_code)
+    else:
+        try:
+            int(response)
+        except TypeError:
+            # When a failed request comes in, treat it as no change vs target duration
+            fail_reason = "Request failed"
+
     if total_target > total_actual:
         ahead_behind = "ahead"
         faster_slower = "faster"
@@ -188,9 +198,9 @@ def print_main_output(index, total):
         faster_slower = "slower"
         c = total_actual.total_seconds() / total_target.total_seconds()
         lag = total_actual - total_target
-    print(colored("[%s/%s] (%s/%s) Total %s%% %s (%s %s) Failed: %d" % (
+    print(colored("[%s/%s] (%s/%s) Total %s%% %s (%s %s) Failed: %d %s" % (
         lpad(index), rpad(total), total_target, total_actual, round(c * 100, 2),
-        faster_slower, lag, ahead_behind, failed_count
+        faster_slower, lag, ahead_behind, failed_count, fail_reason
     ), 'green'))
 
 def _replay(requests, speedup, host):
