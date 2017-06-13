@@ -41,6 +41,7 @@ TIME_INDEX = 3
 PATH_INDEX = 5
 TIME_FORMAT = "%d/%b/%Y:%H:%M:%S %z"
 END_OF_QUEUE = (None, None, None, None, None)
+exit = False
 
 import queue
 import threading
@@ -95,6 +96,7 @@ def worker():
         (index, url, request_time, duration, code) = q.get(block=True)
         q.task_done()
         if index is None:
+            #print('<<< Worker thread exit', file=sys.stderr)
             break;
         (response, response_code) = _attemptRequest(url)
 
@@ -107,6 +109,7 @@ def printer():
         (file, line) = print_queue.get(block=True)
         if line is None:
             print_queue.task_done()
+            #print('<<< Printer thread exit', file=sys.stderr)
             break
         print(line, file=file)
         sys.stdout.flush()
@@ -117,24 +120,34 @@ def printer():
 
 def main(filename, proxy, speedup=1):
     global total_number
+    global exit
+    global threads
     """Setup and start replaying."""
     requests = _parse_logfile(filename)
     total_number = len(requests)
     # Sort list by time
     requests.sort(key=lambda request: request[0])
-    print_thread = threading.Thread(target=printer)
+    #print_thread = threading.Thread(target=printer)
     # print_thread.daemon = True
-    print_thread.start()
+    #print_thread.start()
     # Create one thread to start with
     _create_worker_thread()
     _replay(requests, speedup, proxy)
-    q.put(END_OF_QUEUE)
+
     # block until all tasks are done
+    #print('<<< Waiting for queue to deplete', file=sys.stderr)
     q.join()
+    #print("<<< Shutdown all threads", file=sys.stderr)
+    while len(threads):
+        q.put(END_OF_QUEUE)
+        q.join()
+        #print("Active threads %d" % len(threads))
+        threads = [t for t in threads if t.isAlive()]
 
     # Close threads....
-    print_queue.put((None, None))
-    print_thread.join()
+    #print_queue.put((None, None))
+    #print('<< Waiting for Print queue to deplete', file=sys.stderr)
+    #print_thread.join()
 
 def insert_into_queue(tuple):
     if q.qsize() > 0:
