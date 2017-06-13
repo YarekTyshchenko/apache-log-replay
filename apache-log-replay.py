@@ -40,6 +40,7 @@ from termcolor import colored
 TIME_INDEX = 3
 PATH_INDEX = 5
 TIME_FORMAT = "%d/%b/%Y:%H:%M:%S %z"
+END_OF_QUEUE = (None, None, None, None, None)
 
 import queue
 import threading
@@ -76,34 +77,27 @@ def handle_response(index, request_time, duration, response, expected_code, resp
     global failed_count
     global total_target
     total_target += duration
-    if (expected_code != response_code):
-        total_actual += duration
-        failed_count += 1
-    else:
-        try:
-            total_actual += timedelta(seconds=response)
-        except TypeError:
-            # When a failed request comes in, treat it as no change vs target duration
+    try:
+        if (int(expected_code) != int(response_code)):
             total_actual += duration
             failed_count += 1
+        else:
+            total_actual += timedelta(seconds=response)
+    except TypeError:
+        # When a failed request comes in, treat it as no change vs target duration
+        total_actual += duration
+        failed_count += 1
 
     print_main_output(index, total_number, expected_code, response_code, response)
 
 def worker():
     while True:
-        #if q.empty():
-        #    stderr("<<< Caught up, clearing thread")
-            #break
-        #    pass
         (index, url, request_time, duration, code) = q.get(block=True)
         q.task_done()
-        #stderr(str.format("[%d] Time: %s, Duration: %s, URL: %s" % (index, url, request_time, duration)))
-
+        if index is None:
+            break;
         (response, response_code) = _attemptRequest(url)
-        #time.sleep(1 * random.randrange(0, 10))
 
-        #response = random.randrange(1,100)
-        
         handle_response(index, request_time, duration, response, code, response_code)
 
 
@@ -112,6 +106,7 @@ def printer():
     while True:
         (file, line) = print_queue.get(block=True)
         if line is None:
+            print_queue.task_done()
             break
         print(line, file=file)
         sys.stdout.flush()
@@ -133,7 +128,7 @@ def main(filename, proxy, speedup=1):
     # Create one thread to start with
     _create_worker_thread()
     _replay(requests, speedup, proxy)
-
+    q.put(END_OF_QUEUE)
     # block until all tasks are done
     q.join()
 
@@ -179,14 +174,14 @@ def hms_string(sec_elapsed):
 
 def print_main_output(index, total, expected_code, response_code, response):
     fail_reason = None
-    if expected_code != response_code:
-        fail_reason = "Code %s != %s" % (response_code, expected_code)
-    else:
-        try:
+    try:
+        if int(expected_code) != int(response_code):
+            fail_reason = "Code %s != %s" % (response_code, expected_code)
+        else:
             int(response)
-        except TypeError:
-            # When a failed request comes in, treat it as no change vs target duration
-            fail_reason = "Request failed"
+    except TypeError:
+        # When a failed request comes in, treat it as no change vs target duration
+        fail_reason = "Request failed"
 
     if total_target > total_actual:
         ahead_behind = "ahead"
@@ -210,6 +205,7 @@ def _replay(requests, speedup, host):
     last_time = requests[0][0]
     index = 0
     for request_time, path, duration, code in requests:
+        index += 1
         time_delta = (request_time - last_time) // speedup
         print_debug_output(index, total_number, time_delta.total_seconds(), timedelta(microseconds=duration), code)
         time.sleep(time_delta.total_seconds())
@@ -218,7 +214,6 @@ def _replay(requests, speedup, host):
         url = "http://" + host + path
 
         insert_into_queue((index, url, request_time, timedelta(microseconds=duration), code))
-        index += 1
 
 
 def _parse_logfile(filename):
